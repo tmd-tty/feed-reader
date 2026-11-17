@@ -45,7 +45,7 @@ form.add button:disabled{opacity:.5}
 .feed .count{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .feed.err .name::after{content:" ⚠";color:var(--danger)}
 /* カテゴリの見出し(押すとカテゴリの記事、▸ で折りたたみ) */
-.cat{display:flex;align-items:center;gap:4px;padding:8px 8px 4px;margin-top:4px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.03em}
+.cat{display:flex;align-items:center;gap:4px;padding:8px 8px 4px;margin-top:4px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.03em;touch-action:manipulation;user-select:none;-webkit-user-select:none}
 .cat:hover{background:var(--line)}
 .cat.active{background:var(--accent-soft);color:var(--accent)}
 .cat .caret{width:16px;text-align:center;flex:none;border:0;background:none;color:inherit;cursor:pointer;padding:0;font-size:11px}
@@ -68,16 +68,19 @@ form.add button:disabled{opacity:.5}
 .erow input{flex:1}
 .erow.ecat input{font-weight:700}
 .erow select{max-width:96px;flex:none}
-.erow .mv{border:1px solid var(--line);background:var(--panel);border-radius:6px;width:26px;height:26px;flex:none;cursor:pointer;color:var(--muted);padding:0}
-.erow .mv:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}
-.erow .mv:disabled{opacity:.35;cursor:default}
+/* ドラッグのつまみ。指で押さえて動かす(ページのスクロールを止めるため touch-action:none) */
+.grip{flex:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;border-radius:6px;font-size:15px;line-height:1}
+.grip:hover{color:var(--accent);background:var(--panel)}
+.dragging{opacity:.9;box-shadow:0 6px 18px rgba(0,0,0,.25);background:var(--panel) !important;position:relative;z-index:2;border-radius:8px}
+.dragging .grip{cursor:grabbing;color:var(--accent)}
+body.drag-cat .erow.efeed{display:none}
 .erow .rm{border:1px solid var(--line);background:var(--panel);border-radius:6px;height:26px;padding:0 8px;flex:none;cursor:pointer;color:var(--danger);font-size:12px;white-space:nowrap}
 .erow img,.erow .ph{flex:none;width:16px;height:16px;border-radius:3px}
 .ehint{font-size:11.5px;color:var(--muted);padding:2px 12px 8px}
 .armed{display:block !important;background:var(--danger) !important;color:#fff !important;font-size:12px;white-space:nowrap}
 .sep{height:1px;background:var(--line);margin:6px 8px}
-.sidefoot{display:flex;gap:4px;padding:8px 10px;border-top:1px solid var(--line);font-size:12px}
-.sidefoot button,.sidefoot a{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:6px;text-decoration:none}
+.sidefoot{display:flex;gap:2px;padding:8px 8px;border-top:1px solid var(--line);font-size:12px}
+.sidefoot button,.sidefoot a{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:6px;text-decoration:none;white-space:nowrap}
 .sidefoot button:hover,.sidefoot a:hover{background:var(--line);color:var(--text)}
 /* ---- list ---- */
 .list{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
@@ -144,10 +147,10 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
     <div class="msg" id="msg"></div>
     <nav class="feeds" id="feeds"></nav>
     <div class="sidefoot">
-      <button id="importBtn">OPML読込</button>
-      <a href="api/opml">OPML書出</a>
       <!-- サーバーでは /feed/ の下で動くので、1つ上がダッシュボード(手元で動かしているときは自分自身) -->
-      <a href="../" style="margin-left:auto">← ダッシュボード</a>
+      <a href="../">← ダッシュボード</a>
+      <button id="importBtn" style="margin-left:auto">OPML読込</button>
+      <a href="api/opml">OPML書出</a>
       <input type="file" id="importFile" accept=".opml,.xml,text/xml" hidden>
     </div>
   </aside>
@@ -270,36 +273,95 @@ function renderNormal(total) {
         (cats.length && loose.length ? group('', '未分類') : loose.map(f => row(f.id, f.title || f.url, f.unread, iconOf(f), f)).join('')));
 }
 
-// 編集モード: カテゴリの名前・並び・削除、フィードの名前・カテゴリ・並び・削除
+// 編集モード: カテゴリの名前・削除、フィードの名前・カテゴリ・削除。並べ替えは左の ⠿ をドラッグ
 function renderEdit() {
   const cats = catNames();
   const opts = cur => `<option value="">未分類</option>` + cats.map(c => `<option ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('');
-  const feedRow = (f, k, n) => `
+  const feedRow = f => `
     <div class="erow efeed" data-fid="${f.id}">
-      <div class="l1">${iconOf(f)}<input value="${esc(f.title || f.url)}" data-ftitle="${f.id}" aria-label="フィード名"></div>
+      <div class="l1"><span class="grip" data-drag="feed" aria-label="ドラッグで並べ替え">⠿</span>${iconOf(f)}<input value="${esc(f.title || f.url)}" data-ftitle="${f.id}" aria-label="フィード名"></div>
       <div class="l2">
         <select data-fcat="${f.id}" aria-label="カテゴリ">${opts(f.category || '')}</select>
-        <button class="mv" data-fmove="${f.id}" data-dir="-1" ${k === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
-        <button class="mv" data-fmove="${f.id}" data-dir="1" ${k === n - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
         <button class="rm" data-fdel="${f.id}">削除</button>
       </div>
     </div>`;
-  const block = (cat, i) => {
-    const fs = feedsIn(cat);
-    const head = cat === '' ? `<div class="erow ecat"><span style="flex:1;font-weight:700;font-size:12.5px;padding:3px 6px">未分類</span></div>` : `
-      <div class="erow ecat" data-cat="${esc(cat)}">
-        <input value="${esc(cat)}" data-crename="${esc(cat)}" aria-label="カテゴリ名">
-        <button class="mv" data-cmove="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
-        <button class="mv" data-cmove="${i}" data-dir="1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
-        <button class="rm" data-cdel="${esc(cat)}">削除</button>
-      </div>`;
-    return head + fs.map((f, k) => feedRow(f, k, fs.length)).join('');
-  };
+  const block = cat => (cat === ''
+      ? `<div class="erow ecat" data-cat=""><span class="grip" style="visibility:hidden">⠿</span><span style="flex:1;font-weight:700;font-size:12.5px;padding:3px 6px">未分類</span></div>`
+      : `<div class="erow ecat" data-cat="${esc(cat)}">
+          <span class="grip" data-drag="cat" aria-label="ドラッグで並べ替え">⠿</span>
+          <input value="${esc(cat)}" data-crename="${esc(cat)}" aria-label="カテゴリ名">
+          <button class="rm" data-cdel="${esc(cat)}">削除</button>
+        </div>`) + feedsIn(cat).map(feedRow).join('');
   $('#feeds').innerHTML =
-    '<div class="ehint">▲▼ で並べ替え、名前は書き換えて Enter。カテゴリを削除すると中のフィードは未分類に移ります。</div>' +
-    cats.map((c, i) => block(c, i)).join('') + (feedsIn('').length || !cats.length ? block('', -1) : '');
+    '<div class="ehint">左の ⠿ を押さえたまま動かすと並べ替え(フィードは別のカテゴリへも移せる)。名前は書き換えて Enter。カテゴリを削除すると中のフィードは未分類に移ります。</div>' +
+    cats.map(block).join('') + block('');
 }
 
+/* ---------- ドラッグで並べ替え(マウス・指どちらも。iPhone の Safari は標準のドラッグが使えないので自前で動かす) ---------- */
+let drag = null;
+$('#feeds').addEventListener('pointerdown', e => {
+  const grip = e.target.closest('[data-drag]');
+  if (!grip || !state.edit) return;
+  e.preventDefault();
+  const kind = grip.dataset.drag;
+  const el = grip.closest('.erow');
+  if (kind === 'cat') document.body.classList.add('drag-cat'); // カテゴリを動かす間はフィードを隠して見出しだけにする
+  el.classList.add('dragging');
+  grip.setPointerCapture(e.pointerId);
+  drag = { kind, el, grip, startY: e.clientY, baseTop: el.getBoundingClientRect().top };
+});
+$('#feeds').addEventListener('pointermove', e => {
+  if (!drag) return;
+  const box = $('#feeds'), r = box.getBoundingClientRect();
+  // 端に近づいたら自動でスクロール
+  if (e.clientY < r.top + 40) box.scrollTop -= 10; else if (e.clientY > r.bottom - 40) box.scrollTop += 10;
+  // 指の位置の上下にある行を探し、その間に入れる
+  const rows = [...box.querySelectorAll(drag.kind === 'cat' ? '.erow.ecat' : '.erow')].filter(x => x !== drag.el && x.offsetParent);
+  let before = null;
+  for (const row of rows) {
+    const b = row.getBoundingClientRect();
+    if (e.clientY < b.top + b.height / 2) { before = row; break; }
+  }
+  if (drag.kind === 'feed') {
+    // 一番上(最初のカテゴリの見出しより上)には置けない
+    const firstHead = box.querySelector('.erow.ecat');
+    if (before === firstHead) before = firstHead.nextSibling;
+    box.insertBefore(drag.el, before);
+  } else {
+    // 未分類は常に最後
+    const loose = box.querySelector('.erow.ecat[data-cat=""]');
+    if (!before || before === loose || before.compareDocumentPosition(loose) & Node.DOCUMENT_POSITION_PRECEDING) before = loose;
+    box.insertBefore(drag.el, before);
+  }
+});
+async function endDrag() {
+  if (!drag) return;
+  const { kind, el } = drag;
+  drag = null;
+  el.classList.remove('dragging');
+  document.body.classList.remove('drag-cat');
+  const box = $('#feeds');
+  if (kind === 'cat') {
+    // 見出しの並びをカテゴリの順にし、各カテゴリのフィードは元のまま
+    const order = [...box.querySelectorAll('.erow.ecat')].map(x => x.dataset.cat).filter(Boolean);
+    state.categories = order.map(name => state.categories.find(c => c.name === name));
+  } else {
+    // 上から順に見て、直前の見出しのカテゴリに入れる
+    let cat = '';
+    const ordered = [];
+    for (const row of box.querySelectorAll('.erow')) {
+      if (row.classList.contains('ecat')) { cat = row.dataset.cat; continue; }
+      const f = state.feeds.find(x => x.id == row.dataset.fid);
+      if (f) { f.category = cat; ordered.push(f); }
+    }
+    state.feeds = ordered;
+  }
+  await saveLayout();
+}
+$('#feeds').addEventListener('pointerup', endDrag);
+$('#feeds').addEventListener('pointercancel', endDrag);
+
+let lastCatTap = { id: null, at: 0 };
 // 今の並び(state.categories と state.feeds の順)をサーバーに保存する
 async function saveLayout() {
   const order = [...catNames(), ''];
@@ -308,27 +370,9 @@ async function saveLayout() {
   catch (err) { $('#msg').textContent = err.message; }
   await loadFeeds();
 }
-function moveFeed(id, dir) {
-  const f = state.feeds.find(x => x.id == id);
-  const fs = feedsIn(f.category || '');
-  const k = fs.indexOf(f), other = fs[k + dir];
-  if (!other) return;
-  const a = state.feeds.indexOf(f), b = state.feeds.indexOf(other);
-  [state.feeds[a], state.feeds[b]] = [state.feeds[b], state.feeds[a]];
-  saveLayout();
-}
-function moveCat(i, dir) {
-  const c = state.categories, j = i + dir;
-  if (j < 0 || j >= c.length) return;
-  [c[i], c[j]] = [c[j], c[i]];
-  saveLayout();
-}
-
 $('#feeds').addEventListener('click', async e => {
   if (state.edit) {
     const t = e.target;
-    if (t.dataset.fmove) return moveFeed(t.dataset.fmove, +t.dataset.dir);
-    if (t.dataset.cmove) return moveCat(+t.dataset.cmove, +t.dataset.dir);
     if (t.dataset.fdel) {
       if (!armed(t, '本当に削除')) return;
       await api('api/feeds/' + t.dataset.fdel, { method: 'DELETE' });
@@ -346,12 +390,18 @@ $('#feeds').addEventListener('click', async e => {
     }
     return;
   }
+  // 折りたたみ: 左の ▾ を押す、または見出しのどこでも2回続けて押す
   const tog = e.target.closest('[data-toggle]');
-  if (tog) {
+  const head = e.target.closest('.cat');
+  const now = Date.now();
+  const twice = head && lastCatTap.id === head.dataset.id && now - lastCatTap.at < 400;
+  lastCatTap = head ? { id: head.dataset.id, at: now } : { id: null, at: 0 };
+  if (tog || twice) {
     e.stopPropagation();
-    const c = tog.dataset.toggle;
+    const c = (tog || head.querySelector('[data-toggle]')).dataset.toggle;
     collapsed.has(c) ? collapsed.delete(c) : collapsed.add(c);
     saveCollapsed(); renderFeeds();
+    if (twice) lastCatTap = { id: null, at: 0 };
     return;
   }
   const el = e.target.closest('.feed,.cat');
