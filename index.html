@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feed Reader</title>
+<style>
+:root{
+  --bg:#f7f7f5; --panel:#ffffff; --side:#efeeeb; --text:#1f1f1d; --muted:#76746e;
+  --line:#e2e0db; --accent:#d9622b; --accent-soft:#fbe9e0; --sel:#fff4ee; --danger:#c0392b;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#191917; --panel:#21211f; --side:#1c1c1a; --text:#e9e7e2; --muted:#9a978f;
+    --line:#33322f; --accent:#ef8a5a; --accent-soft:#3a2a21; --sel:#2c2520; --danger:#e57366;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
+button,input{font:inherit;color:inherit}
+.app{display:grid;grid-template-columns:250px 380px 1fr;height:100vh}
+/* ---- sidebar ---- */
+.side{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 8px}
+.brand h1{font-size:15px;margin:0;letter-spacing:.02em}
+.iconbtn{border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:6px;color:var(--muted)}
+.iconbtn:hover{background:var(--line);color:var(--text)}
+.iconbtn.spin svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+form.add{display:flex;gap:6px;padding:4px 12px 10px}
+form.add input{flex:1;min-width:0;border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 9px;outline:none}
+form.add input:focus{border-color:var(--accent)}
+form.add button{border:0;background:var(--accent);color:#fff;border-radius:8px;padding:0 10px;cursor:pointer}
+form.add button:disabled{opacity:.5}
+.msg{font-size:12px;padding:0 14px 6px;color:var(--danger);min-height:0}
+.feeds{flex:1;overflow:auto;padding:4px 6px 10px}
+.feed{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:7px;cursor:pointer;position:relative}
+.feed:hover{background:var(--line)}
+.feed.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.feed img{width:16px;height:16px;border-radius:3px;flex:none}
+.feed .ph{width:16px;height:16px;border-radius:3px;background:var(--line);flex:none}
+.feed .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feed .count{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.feed.err .name::after{content:" ⚠";color:var(--danger)}
+.feed .del{display:none;position:absolute;right:4px;background:var(--side)}
+.feed:hover .del{display:block}
+.feed:hover .count{visibility:hidden}
+.armed{display:block !important;background:var(--danger) !important;color:#fff !important;font-size:12px;white-space:nowrap}
+.sep{height:1px;background:var(--line);margin:6px 8px}
+.sidefoot{display:flex;gap:4px;padding:8px 10px;border-top:1px solid var(--line);font-size:12px}
+.sidefoot button,.sidefoot a{border:0;background:transparent;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:6px;text-decoration:none}
+.sidefoot button:hover,.sidefoot a:hover{background:var(--line);color:var(--text)}
+/* ---- list ---- */
+.list{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.listhead{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.listhead h2{font-size:15px;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;font-size:12px}
+.seg button{border:0;background:transparent;padding:3px 9px;cursor:pointer;color:var(--muted)}
+.seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.items{flex:1;overflow:auto}
+.item{padding:11px 14px 12px;border-bottom:1px solid var(--line);cursor:pointer;border-left:3px solid transparent}
+.item:hover{background:var(--bg)}
+.item.sel{background:var(--sel);border-left-color:var(--accent)}
+.item .meta{display:flex;gap:6px;font-size:11.5px;color:var(--muted);margin-bottom:2px}
+.item .meta .src{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.item .t{font-weight:650;line-height:1.4}
+.item.read .t{font-weight:400;color:var(--muted)}
+.item .ex{font-size:12.5px;color:var(--muted);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item .star{color:var(--accent)}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+/* ---- reader ---- */
+.reader{display:flex;flex-direction:column;min-height:0;background:var(--panel)}
+.rhead{padding:22px 32px 14px;border-bottom:1px solid var(--line)}
+.rhead .src{font-size:12px;color:var(--muted)}
+.rhead h1{font-size:22px;line-height:1.35;margin:6px 0 10px}
+.rhead h1 a{color:inherit;text-decoration:none}
+.rhead h1 a:hover{text-decoration:underline}
+.tools{display:flex;gap:6px;flex-wrap:wrap}
+.tools button,.tools a{border:1px solid var(--line);background:transparent;border-radius:7px;padding:4px 10px;cursor:pointer;font-size:12.5px;color:var(--text);text-decoration:none}
+.tools button:hover,.tools a:hover{border-color:var(--accent);color:var(--accent)}
+.tools .on{color:var(--accent);border-color:var(--accent)}
+iframe{flex:1;border:0;width:100%;background:var(--panel)}
+.placeholder{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);flex-direction:column;gap:8px;text-align:center;padding:20px}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
+.back{display:none}
+@media (max-width: 900px){
+  .app{grid-template-columns:1fr}
+  .app > *{display:none !important}
+  .app[data-view="side"] .side,.app[data-view="list"] .list,.app[data-view="reader"] .reader{display:flex !important}
+  .back{display:inline-block}
+  .rhead{padding:16px}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app" data-view="list">
+  <aside class="side">
+    <div class="brand">
+      <h1>Feed Reader</h1>
+      <button class="iconbtn" id="refresh" title="すべて更新 (r)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
+      </button>
+    </div>
+    <form class="add" id="addForm">
+      <input id="addUrl" placeholder="フィードまたはサイトのURL" autocomplete="off">
+      <button id="addBtn">追加</button>
+    </form>
+    <div class="msg" id="msg"></div>
+    <nav class="feeds" id="feeds"></nav>
+    <div class="sidefoot">
+      <button id="importBtn">OPML読込</button>
+      <a href="/api/opml">OPML書出</a>
+      <input type="file" id="importFile" accept=".opml,.xml,text/xml" hidden>
+    </div>
+  </aside>
+
+  <section class="list">
+    <div class="listhead">
+      <button class="iconbtn back" data-go="side">☰</button>
+      <h2 id="listTitle">すべて</h2>
+      <div class="seg">
+        <button data-unread="1" class="on">未読</button>
+        <button data-unread="0">すべて</button>
+      </div>
+      <button class="iconbtn" id="markAll" title="すべて既読にする">✓</button>
+    </div>
+    <div class="items" id="items"></div>
+  </section>
+
+  <main class="reader" id="reader">
+    <div class="placeholder">
+      <div>記事を選択してください</div>
+      <div style="font-size:12px"><kbd>j</kbd>/<kbd>k</kbd> 次/前　<kbd>v</kbd> 元記事　<kbd>s</kbd> スター　<kbd>m</kbd> 未読切替　<kbd>r</kbd> 更新</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = { feeds: [], items: [], feed: 'all', unread: true, sel: null };
+try { const u = localStorage.getItem('unreadOnly'); if (u !== null) state.unread = u === '1'; } catch {}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    method: opts.method || (opts.body ? 'POST' : 'GET'),
+    headers: { 'Content-Type': 'application/json' },
+    body: opts.body ? JSON.stringify(opts.body) : (opts.method && opts.method !== 'GET' ? '{}' : undefined),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function favicon(f) {
+  try { const h = new URL(f.site_url || f.url).hostname; return `https://www.google.com/s2/favicons?sz=32&domain=${h}`; }
+  catch { return ''; }
+}
+
+function fmtDate(t) {
+  if (!t) return '';
+  const d = new Date(t * 1000), now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60 * 60) return Math.max(1, Math.floor(diff / 60)) + '分前';
+  if (diff < 24 * 3600) return Math.floor(diff / 3600) + '時間前';
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}/${md}`;
+}
+
+function setView(v) { $('#app').dataset.view = v; }
+
+/* 確認ダイアログの代わりの2段階クリック：1回目でボタンが確認表示になり、3秒以内にもう一度押すと実行 */
+function armed(btn, label) {
+  if (btn.classList.contains('armed')) { clearTimeout(btn._t); return true; }
+  btn._orig = btn.innerHTML;
+  btn.classList.add('armed');
+  btn.textContent = label;
+  btn._t = setTimeout(() => { btn.classList.remove('armed'); btn.innerHTML = btn._orig; }, 3000);
+  return false;
+}
+
+/* ---------- feeds ---------- */
+async function loadFeeds() {
+  state.feeds = await api('/api/feeds');
+  renderFeeds();
+}
+function renderFeeds() {
+  const total = state.feeds.reduce((a, f) => a + f.unread, 0);
+  const row = (id, name, count, icon, f) => `
+    <div class="feed ${state.feed == id ? 'active' : ''} ${f && f.error ? 'err' : ''}" data-id="${id}" title="${esc(f ? (f.error || f.url) : name)}">
+      ${icon}<span class="name">${esc(name)}</span>
+      <span class="count">${count || ''}</span>
+      ${f ? `<button class="iconbtn del" data-del="${id}" title="削除">✕</button>` : ''}
+    </div>`;
+  $('#feeds').innerHTML =
+    row('all', 'すべて', total, '<span class="ph" style="background:var(--accent)"></span>') +
+    row('starred', 'スター付き', '', '<span class="ph" style="background:none;color:var(--accent);line-height:16px;text-align:center">★</span>') +
+    '<div class="sep"></div>' +
+    (state.feeds.length ? state.feeds.map(f =>
+      row(f.id, f.title || f.url, f.unread, `<img src="${esc(favicon(f))}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ph'}))">`, f)
+    ).join('') : '<div class="empty" style="padding:16px">上の欄にURLを入れて<br>フィードを追加</div>');
+  const cur = state.feeds.find(f => f.id == state.feed);
+  $('#listTitle').textContent = state.feed === 'all' ? 'すべて' : state.feed === 'starred' ? 'スター付き' : (cur ? cur.title : '');
+  document.title = total ? `(${total}) Feed Reader` : 'Feed Reader';
+}
+$('#feeds').addEventListener('click', async e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    e.stopPropagation();
+    if (!armed(del, '削除する')) return;
+    const f = state.feeds.find(x => x.id == del.dataset.del);
+    await api('/api/feeds/' + f.id, { method: 'DELETE' });
+    if (state.feed == f.id) state.feed = 'all';
+    await loadFeeds(); await loadItems();
+    return;
+  }
+  const el = e.target.closest('.feed');
+  if (!el) return;
+  state.feed = el.dataset.id;
+  renderFeeds();
+  await loadItems();
+  setView('list');
+});
+
+$('#addForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const url = $('#addUrl').value.trim();
+  if (!url) return;
+  $('#addBtn').disabled = true; $('#msg').textContent = '';
+  try {
+    const { id } = await api('/api/feeds', { body: { url } });
+    $('#addUrl').value = '';
+    state.feed = String(id);
+    await loadFeeds(); await loadItems();
+  } catch (err) { $('#msg').textContent = err.message; }
+  finally { $('#addBtn').disabled = false; }
+});
+
+async function refresh() {
+  const b = $('#refresh'); if (b.classList.contains('spin')) return;
+  b.classList.add('spin');
+  try { await api('/api/refresh', { method: 'POST' }); await loadFeeds(); await loadItems(true); }
+  finally { b.classList.remove('spin'); }
+}
+$('#refresh').onclick = refresh;
+
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  const file = e.target.files[0]; if (!file) return;
+  $('#msg').style.color = 'var(--muted)'; $('#msg').textContent = '読み込み中…';
+  try {
+    const r = await api('/api/opml', { body: { text: await file.text() } });
+    $('#msg').textContent = `${r.added}件追加` + (r.skipped ? `（${r.skipped}件スキップ）` : '');
+    await loadFeeds(); await loadItems();
+  } catch (err) { $('#msg').style.color = ''; $('#msg').textContent = err.message; }
+  e.target.value = '';
+};
+
+/* ---------- items ---------- */
+async function loadItems(keepSel) {
+  state.items = await api(`/api/items?feed=${state.feed}&unread=${state.unread ? 1 : 0}`);
+  if (!keepSel) state.sel = null;
+  renderItems();
+}
+function renderItems() {
+  document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', (b.dataset.unread === '1') === state.unread));
+  if (!state.items.length) {
+    $('#items').innerHTML = `<div class="empty">${state.unread ? '未読の記事はありません 🎉' : '記事はありません'}</div>`;
+    return;
+  }
+  $('#items').innerHTML = state.items.map(it => `
+    <div class="item ${it.read ? 'read' : ''} ${state.sel == it.id ? 'sel' : ''}" data-id="${it.id}">
+      <div class="meta"><span class="src">${esc(it.feed_title)}</span>${it.starred ? '<span class="star">★</span>' : ''}<span>${fmtDate(it.published)}</span></div>
+      <div class="t">${esc(it.title || '(無題)')}</div>
+      ${it.excerpt ? `<div class="ex">${esc(it.excerpt)}</div>` : ''}
+    </div>`).join('');
+}
+$('#items').addEventListener('click', e => { const el = e.target.closest('.item'); if (el) openItem(+el.dataset.id); });
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+  state.unread = b.dataset.unread === '1';
+  try { localStorage.setItem('unreadOnly', state.unread ? '1' : '0'); } catch {}
+  loadItems();
+});
+$('#markAll').onclick = async () => {
+  if (!armed($('#markAll'), 'すべて既読にする')) return;
+  await api('/api/mark-all-read', { body: { feed: state.feed } });
+  await loadFeeds(); await loadItems();
+};
+
+function patchItem(id, fields) {
+  const it = state.items.find(x => x.id === id);
+  if (it) Object.assign(it, fields);
+  renderItems();
+}
+
+async function setFlag(id, k, v) {
+  await api('/api/items/' + id, { body: { [k]: v } });
+  patchItem(id, { [k]: v ? 1 : 0 });
+  if (k === 'read') {
+    const it = state.items.find(x => x.id === id);
+    const f = it && state.feeds.find(x => x.id === it.feed_id);
+    if (f) { f.unread += v ? -1 : 1; renderFeeds(); }
+  }
+  if (state.sel === id) renderReaderTools();
+}
+
+let current = null;
+async function openItem(id) {
+  state.sel = id;
+  renderItems();
+  document.querySelector(`.item[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+  current = await api('/api/items/' + id);
+  renderReader();
+  setView('reader');
+  if (!current.read) { current.read = 1; setFlag(id, 'read', true); }
+}
+
+function articleDoc(it) {
+  let body = it.content || '<p style="color:#888">（本文なし — 元記事を開いてください）</p>';
+  if (!/<[a-z][\s\S]*>/i.test(body)) body = '<p>' + esc(body).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="script-src 'none'">
+<base href="${esc(it.link || '')}" target="_blank">
+<style>
+body{margin:0;padding:22px 32px 60px;max-width:760px;font:16px/1.85 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  color:${dark ? '#e9e7e2' : '#1f1f1d'};background:${dark ? '#21211f' : '#fff'};word-wrap:break-word}
+a{color:${dark ? '#ef8a5a' : '#c4531f'}}
+img,video,iframe{max-width:100%;height:auto}
+pre{overflow:auto;background:${dark ? '#2b2b28' : '#f4f3f0'};padding:12px;border-radius:6px;font-size:13px}
+blockquote{margin:0;padding-left:14px;border-left:3px solid ${dark ? '#444' : '#ddd'};color:${dark ? '#aaa' : '#666'}}
+table{border-collapse:collapse;max-width:100%}td,th{border:1px solid ${dark ? '#444' : '#ddd'};padding:4px 8px}
+@media (max-width:600px){body{padding:16px}}
+</style></head><body>${body}</body></html>`;
+}
+
+function renderReader() {
+  const it = current;
+  $('#reader').innerHTML = `
+    <div class="rhead">
+      <button class="iconbtn back" data-go="list">← 戻る</button>
+      <div class="src">${esc(it.feed_title)}${it.author ? ' · ' + esc(it.author) : ''} · ${it.published ? new Date(it.published * 1000).toLocaleString('ja-JP') : ''}</div>
+      <h1><a href="${esc(it.link)}" target="_blank" rel="noopener noreferrer">${esc(it.title || '(無題)')}</a></h1>
+      <div class="tools" id="rtools"></div>
+    </div>
+    <iframe sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>`;
+  $('#reader iframe').srcdoc = articleDoc(it);
+  renderReaderTools();
+}
+function renderReaderTools() {
+  const it = state.items.find(x => x.id === current?.id) || current;
+  if (!it || !$('#rtools')) return;
+  $('#rtools').innerHTML = `
+    <a href="${esc(current.link)}" target="_blank" rel="noopener noreferrer">元記事を開く ↗</a>
+    <button data-act="star" class="${it.starred ? 'on' : ''}">${it.starred ? '★ スター済み' : '☆ スター'}</button>
+    <button data-act="read">${it.read ? '未読に戻す' : '既読にする'}</button>`;
+}
+$('#reader').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || !current) return;
+  const it = state.items.find(x => x.id === current.id) || current;
+  if (b.dataset.act === 'star') setFlag(current.id, 'starred', !it.starred);
+  if (b.dataset.act === 'read') setFlag(current.id, 'read', !it.read);
+});
+document.addEventListener('click', e => { const g = e.target.closest('[data-go]'); if (g) setView(g.dataset.go); });
+
+/* ---------- keyboard ---------- */
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  const idx = state.items.findIndex(x => x.id === state.sel);
+  const it = state.items[idx];
+  switch (e.key) {
+    case 'j': case 'ArrowDown': if (idx < state.items.length - 1) openItem(state.items[idx + 1].id); e.preventDefault(); break;
+    case 'k': case 'ArrowUp': if (idx > 0) openItem(state.items[idx - 1].id); e.preventDefault(); break;
+    case 'v': case 'o': if (it?.link) window.open(it.link, '_blank', 'noopener'); break;
+    case 's': if (it) setFlag(it.id, 'starred', !it.starred); break;
+    case 'm': if (it) setFlag(it.id, 'read', !it.read); break;
+    case 'r': refresh(); break;
+  }
+});
+
+(async () => {
+  await loadFeeds(); await loadItems();
+  setInterval(async () => { await loadFeeds(); }, 5 * 60 * 1000);
+})();
+</script>
+</body>
+</html>
