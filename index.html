@@ -110,7 +110,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
     <nav class="feeds" id="feeds"></nav>
     <div class="sidefoot">
       <button id="importBtn">OPML読込</button>
-      <a href="/api/opml">OPML書出</a>
+      <a href="api/opml">OPML書出</a>
       <input type="file" id="importFile" accept=".opml,.xml,text/xml" hidden>
     </div>
   </aside>
@@ -182,7 +182,7 @@ function armed(btn, label) {
 
 /* ---------- feeds ---------- */
 async function loadFeeds() {
-  state.feeds = await api('/api/feeds');
+  state.feeds = await api('api/feeds');
   renderFeeds();
 }
 function renderFeeds() {
@@ -210,7 +210,7 @@ $('#feeds').addEventListener('click', async e => {
     e.stopPropagation();
     if (!armed(del, '削除する')) return;
     const f = state.feeds.find(x => x.id == del.dataset.del);
-    await api('/api/feeds/' + f.id, { method: 'DELETE' });
+    await api('api/feeds/' + f.id, { method: 'DELETE' });
     if (state.feed == f.id) state.feed = 'all';
     await loadFeeds(); await loadItems();
     return;
@@ -229,7 +229,7 @@ $('#addForm').addEventListener('submit', async e => {
   if (!url) return;
   $('#addBtn').disabled = true; $('#msg').textContent = '';
   try {
-    const { id } = await api('/api/feeds', { body: { url } });
+    const { id } = await api('api/feeds', { body: { url } });
     $('#addUrl').value = '';
     state.feed = String(id);
     await loadFeeds(); await loadItems();
@@ -240,7 +240,7 @@ $('#addForm').addEventListener('submit', async e => {
 async function refresh() {
   const b = $('#refresh'); if (b.classList.contains('spin')) return;
   b.classList.add('spin');
-  try { await api('/api/refresh', { method: 'POST' }); await loadFeeds(); await loadItems(true); }
+  try { await api('api/refresh', { method: 'POST' }); await loadFeeds(); await loadItems(true); }
   finally { b.classList.remove('spin'); }
 }
 $('#refresh').onclick = refresh;
@@ -250,7 +250,7 @@ $('#importFile').onchange = async e => {
   const file = e.target.files[0]; if (!file) return;
   $('#msg').style.color = 'var(--muted)'; $('#msg').textContent = '読み込み中…';
   try {
-    const r = await api('/api/opml', { body: { text: await file.text() } });
+    const r = await api('api/opml', { body: { text: await file.text() } });
     $('#msg').textContent = `${r.added}件追加` + (r.skipped ? `（${r.skipped}件スキップ）` : '');
     await loadFeeds(); await loadItems();
   } catch (err) { $('#msg').style.color = ''; $('#msg').textContent = err.message; }
@@ -259,7 +259,7 @@ $('#importFile').onchange = async e => {
 
 /* ---------- items ---------- */
 async function loadItems(keepSel) {
-  state.items = await api(`/api/items?feed=${state.feed}&unread=${state.unread ? 1 : 0}`);
+  state.items = await api(`api/items?feed=${state.feed}&unread=${state.unread ? 1 : 0}`);
   if (!keepSel) state.sel = null;
   renderItems();
 }
@@ -284,7 +284,7 @@ document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
 });
 $('#markAll').onclick = async () => {
   if (!armed($('#markAll'), 'すべて既読にする')) return;
-  await api('/api/mark-all-read', { body: { feed: state.feed } });
+  await api('api/mark-all-read', { body: { feed: state.feed } });
   await loadFeeds(); await loadItems();
 };
 
@@ -295,7 +295,7 @@ function patchItem(id, fields) {
 }
 
 async function setFlag(id, k, v) {
-  await api('/api/items/' + id, { body: { [k]: v } });
+  await api('api/items/' + id, { body: { [k]: v } });
   patchItem(id, { [k]: v ? 1 : 0 });
   if (k === 'read') {
     const it = state.items.find(x => x.id === id);
@@ -310,7 +310,7 @@ async function openItem(id) {
   state.sel = id;
   renderItems();
   document.querySelector(`.item[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
-  current = await api('/api/items/' + id);
+  current = await api('api/items/' + id);
   renderReader();
   setView('reader');
   if (!current.read) { current.read = 1; setFlag(id, 'read', true); }

@@ -1,0 +1,29 @@
+# main に server.py・index.html の変更が push されたら、サーバーに「GitHub から取り直して再起動して」と合図する。
+# - 鍵(Secrets の DEPLOY_PAGES_KEY)はサーバー側で deploy-pages の実行だけに制限している(ログイン・ファイルの送り込みはできない)
+# - ページの中身はサーバーが自分で GitHub から取る(ここからは何も送らない)
+# - 手動で反映し直すときは Actions の画面から「Run workflow」
+# 詳細: shellscripts/README.md の「公開ページの自動反映」
+name: サーバーに反映
+on:
+  push:
+    branches: [main]
+    paths: [server.py, index.html]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: サーバーに合図する
+        env:
+          KEY: ${{ secrets.DEPLOY_PAGES_KEY }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_pages
+          echo '160.251.250.71 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIhiavwR29k16b1TM6NjNPK/sAzwRvhDFg8YxLLS3ZbH' > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_pages -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 deploy@160.251.250.71 feed-reader

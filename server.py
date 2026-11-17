@@ -2,8 +2,16 @@
 """ミニ・フィードリーダー（Python標準ライブラリのみ）
 
   python3 server.py      → http://127.0.0.1:8765 を開く
+
+環境変数:
+  PORT=8765               待ち受けるポート(127.0.0.1 だけで待ち受ける)
+  REFRESH_MINUTES=30      自動更新の間隔
+  FEED_DB=./feeds.db      データ(SQLite)の置き場所
+  FEED_ALLOW_PRIVATE=1    内部・プライベートのアドレスへの取得を許す(既定は拒否。サーバーで公開するときは付けない)
 """
 import html
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -21,10 +29,12 @@ from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE, "feeds.db")
+DB_PATH = os.environ.get("FEED_DB") or os.path.join(BASE, "feeds.db")
 PORT = int(os.environ.get("PORT", 8765))
 REFRESH_MINUTES = int(os.environ.get("REFRESH_MINUTES", 30))
 UA = "Mozilla/5.0 (compatible; MiniFeedReader/1.0)"
+MAX_BYTES = 10 * 1024 * 1024  # 1回の取得の上限(これを超えるものはフィードとして扱わない)
+ALLOW_PRIVATE = os.environ.get("FEED_ALLOW_PRIVATE") == "1"
 
 # ---------------------------------------------------------------- DB
 db_lock = threading.Lock()
@@ -69,6 +79,55 @@ class NotAFeed(Exception):
     pass
 
 
+# サーバー内部・プライベートのアドレスには接続しない(SSRF 対策)。
+# 名前を引いた時点ではなく「実際に接続した相手」の IP で確かめるので、リダイレクト先や DNS の書き換えでもすり抜けない
+def _check_peer(sock):
+    if ALLOW_PRIVATE:
+        return
+    ip = ipaddress.ip_address(sock.getpeername()[0])
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    if not ip.is_global:
+        sock.close()
+        raise ValueError(f"内部・プライベートのアドレス({ip})には接続しません")
+
+
+class _SafeHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        super().connect()
+        _check_peer(self.sock)
+
+
+class _SafeHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        _check_peer(self.sock)
+
+
+class _SafeHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_SafeHTTPConnection, req)
+
+
+class _SafeHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_SafeHTTPSConnection, req, context=self._context)
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlparse(newurl).scheme not in ("http", "https"):
+            raise ValueError("http(s) 以外へのリダイレクトには従いません")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# file:// や ftp:// の処理は入れない
+_OPENER = urllib.request.OpenerDirector()
+for _h in (urllib.request.ProxyHandler({}), urllib.request.UnknownHandler(), _SafeHTTPHandler(), _SafeHTTPSHandler(),
+           urllib.request.HTTPDefaultErrorHandler(), _SafeRedirectHandler(), urllib.request.HTTPErrorProcessor()):
+    _OPENER.add_handler(_h)
+
+
 def fetch(url):
     if urllib.parse.urlparse(url).scheme not in ("http", "https"):
         raise ValueError("http(s) の URL を指定してください")
@@ -76,8 +135,11 @@ def fetch(url):
         "User-Agent": UA,
         "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.8, */*;q=0.5",
     })
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return r.read(), r.geturl()
+    with _OPENER.open(req, timeout=20) as r:
+        data = r.read(MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
+            raise ValueError(f"大きすぎます({MAX_BYTES // 1024 // 1024}MB 超)")
+        return data, r.geturl()
 
 
 def lname(el):
