@@ -56,7 +56,15 @@ def init_db():
           published INTEGER, read INTEGER NOT NULL DEFAULT 0,
           starred INTEGER NOT NULL DEFAULT 0, UNIQUE(feed_id, guid));
         CREATE INDEX IF NOT EXISTS idx_items_pub ON items(published DESC);
+        CREATE TABLE IF NOT EXISTS categories(name TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0);
         """)
+        # 後から足した列(カテゴリと並び順)。古い feeds.db にもそのまま足す
+        cols = {r[1] for r in CONN.execute("PRAGMA table_info(feeds)")}
+        if "category" not in cols:
+            CONN.execute("ALTER TABLE feeds ADD COLUMN category TEXT NOT NULL DEFAULT ''")
+        if "position" not in cols:
+            CONN.execute("ALTER TABLE feeds ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+        CONN.commit()
         CONN.execute("PRAGMA foreign_keys=ON")
 
 
@@ -314,15 +322,26 @@ def normalize_url(url):
     return url
 
 
-def add_feed(url):
+def ensure_category(name):
+    """カテゴリがなければ最後に足す(空文字 = 未分類は足さない)"""
+    if name:
+        ex("INSERT OR IGNORE INTO categories(name, position) VALUES(?, (SELECT COALESCE(MAX(position), 0) + 1 FROM categories))",
+           (name,))
+
+
+def add_feed(url, category=""):
+    category = clean_category(category)
     url = normalize_url(url)
     if not url:
         raise ValueError("URLを入力してください")
     furl, meta, items = load(url)
     if q("SELECT id FROM feeds WHERE url=?", (furl,)):
         raise ValueError("既に登録されています")
-    fid = ex("INSERT INTO feeds(url,title,site_url,last_fetched) VALUES(?,?,?,?)",
-             (furl, meta["title"] or furl, meta["site_url"], int(time.time())))
+    ensure_category(category)
+    # 新しいフィードはそのカテゴリの最後に並べる
+    fid = ex("INSERT INTO feeds(url,title,site_url,last_fetched,category,position) "
+             "VALUES(?,?,?,?,?,(SELECT COALESCE(MAX(position), 0) + 1 FROM feeds))",
+             (furl, meta["title"] or furl, meta["site_url"], int(time.time()), category))
     store(fid, items)
     return fid
 
@@ -359,28 +378,89 @@ def background_refresher():
 
 # ---------------------------------------------------------------- OPML
 def import_opml(src):
+    """OPML を読み込む。フィードを囲む outline(xmlUrl のないもの)の名前をカテゴリにする"""
     root = parse_xml(src.encode() if isinstance(src, str) else src)
-    urls = [o.get("xmlUrl") for o in root.iter() if lname(o) == "outline" and o.get("xmlUrl")]
+    found = []
 
-    def one(u):
+    def walk(el, cat):
+        for o in el:
+            if lname(o) != "outline":
+                walk(o, cat)
+            elif o.get("xmlUrl"):
+                found.append((o.get("xmlUrl"), cat))
+            else:
+                walk(o, (o.get("text") or o.get("title") or "").strip() or cat)
+
+    walk(root, "")
+    for _, cat in found:  # カテゴリは OPML に出てきた順に足す
+        ensure_category(clean_category(cat))
+
+    def one(uc):
         try:
-            add_feed(u)
+            add_feed(*uc)
             return True
         except Exception:
             return False
 
     with ThreadPoolExecutor(6) as pool:
-        results = list(pool.map(one, urls))
+        results = list(pool.map(one, found))
     return {"added": sum(results), "skipped": len(results) - sum(results)}
 
 
 def export_opml():
-    rows = q("SELECT url,title,site_url FROM feeds ORDER BY lower(title)")
-    outlines = "\n".join(
-        f'    <outline type="rss" text="{html.escape(r["title"] or "")}" title="{html.escape(r["title"] or "")}" '
-        f'xmlUrl="{html.escape(r["url"])}" htmlUrl="{html.escape(r["site_url"] or "")}"/>' for r in rows)
+    """カテゴリは outline で囲んで書き出す(並び順もそのまま)"""
+    def line(r, indent):
+        return (f'{indent}<outline type="rss" text="{html.escape(r["title"] or "")}" title="{html.escape(r["title"] or "")}" '
+                f'xmlUrl="{html.escape(r["url"])}" htmlUrl="{html.escape(r["site_url"] or "")}"/>')
+    rows = list_feeds()
+    out = []
+    for c in list_categories():
+        inner = [line(r, "      ") for r in rows if r["category"] == c["name"]]
+        out.append(f'    <outline text="{html.escape(c["name"])}" title="{html.escape(c["name"])}">' +
+                   ("\n" + "\n".join(inner) + "\n    " if inner else "") + "</outline>")
+    out += [line(r, "    ") for r in rows if not r["category"]]
     return ('<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Feeds</title></head>\n'
-            f"  <body>\n{outlines}\n  </body>\n</opml>\n")
+            "  <body>\n" + "\n".join(out) + "\n  </body>\n</opml>\n")
+
+
+# ---------------------------------------------------------------- カテゴリと並び順
+def clean_category(name):
+    name = re.sub(r"\s+", " ", str(name or "")).strip()
+    if len(name) > 40:
+        raise ValueError("カテゴリ名は40文字までです")
+    return name
+
+
+def list_categories():
+    return q("SELECT name, position FROM categories ORDER BY position, name")
+
+
+def list_feeds():
+    """カテゴリの順 → カテゴリ内の順。未分類は最後"""
+    return q("""SELECT f.*, (SELECT COUNT(*) FROM items i WHERE i.feed_id=f.id AND i.read=0) AS unread
+                FROM feeds f LEFT JOIN categories c ON c.name = f.category
+                ORDER BY f.category = '', c.position, f.position, lower(f.title)""")
+
+
+def save_layout(b):
+    """編集モードの結果をまとめて保存する。categories: カテゴリ名の並び、feeds: [{id, category}] の並び"""
+    cats = [clean_category(c) for c in b.get("categories") or []]
+    if "" in cats or len(set(cats)) != len(cats):
+        raise ValueError("カテゴリ名が空か、重複しています")
+    feeds = b.get("feeds") or []
+    with db_lock:
+        try:
+            CONN.execute("DELETE FROM categories")
+            CONN.executemany("INSERT INTO categories(name, position) VALUES(?, ?)", [(c, i) for i, c in enumerate(cats)])
+            for i, f in enumerate(feeds):
+                cat = clean_category(f.get("category"))
+                if cat and cat not in cats:
+                    raise ValueError(f"存在しないカテゴリです: {cat}")
+                CONN.execute("UPDATE feeds SET category=?, position=? WHERE id=?", (cat, i, int(f["id"])))
+            CONN.commit()
+        except Exception:
+            CONN.rollback()
+            raise
 
 
 # ---------------------------------------------------------------- HTTP
@@ -434,8 +514,9 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(BASE, "index.html"), "rb") as f:
                     return self.send(f.read(), "text/html; charset=utf-8")
             if p == "/api/feeds":
-                return self.send(q("""SELECT f.*, (SELECT COUNT(*) FROM items i WHERE i.feed_id=f.id AND i.read=0) AS unread
-                                      FROM feeds f ORDER BY lower(f.title)"""))
+                return self.send(list_feeds())
+            if p == "/api/categories":
+                return self.send(list_categories())
             if p == "/api/items":
                 where, args = [], []
                 feed = qs.get("feed", "all")
@@ -444,6 +525,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif feed.isdigit():
                     where.append("i.feed_id=?")
                     args.append(int(feed))
+                elif feed.startswith("cat:"):
+                    where.append("f.category=?")
+                    args.append(feed[4:])
                 if qs.get("unread") == "1":
                     where.append("i.read=0")
                 sql = ("SELECT i.id,i.feed_id,i.title,i.link,i.author,i.published,i.read,i.starred,"
@@ -477,11 +561,16 @@ class Handler(BaseHTTPRequestHandler):
                     ex("UPDATE items SET read=1 WHERE feed_id=?", (int(feed),))
                 elif feed == "starred":
                     ex("UPDATE items SET read=1 WHERE starred=1")
+                elif feed.startswith("cat:"):
+                    ex("UPDATE items SET read=1 WHERE feed_id IN (SELECT id FROM feeds WHERE category=?)", (feed[4:],))
                 else:
                     ex("UPDATE items SET read=1")
                 return self.send({"ok": True})
             if p == "/api/opml":
                 return self.send(import_opml(b.get("text", "")))
+            if p == "/api/layout":
+                save_layout(b)
+                return self.send({"ok": True})
             if m and m.group(1) == "items":
                 for k in ("read", "starred"):
                     if k in b:

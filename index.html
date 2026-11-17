@@ -16,6 +16,7 @@
   }
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;}
 button,input{font:inherit;color:inherit}
@@ -43,9 +44,36 @@ form.add button:disabled{opacity:.5}
 .feed .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .feed .count{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .feed.err .name::after{content:" ⚠";color:var(--danger)}
-.feed .del{display:none;position:absolute;right:4px;background:var(--side)}
-.feed:hover .del{display:block}
-.feed:hover .count{visibility:hidden}
+/* カテゴリの見出し(押すとカテゴリの記事、▸ で折りたたみ) */
+.cat{display:flex;align-items:center;gap:4px;padding:8px 8px 4px;margin-top:4px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.03em}
+.cat:hover{background:var(--line)}
+.cat.active{background:var(--accent-soft);color:var(--accent)}
+.cat .caret{width:16px;text-align:center;flex:none;border:0;background:none;color:inherit;cursor:pointer;padding:0;font-size:11px}
+.cat .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cat .count{font-weight:400;font-variant-numeric:tabular-nums}
+.feed.in{padding-left:16px}
+/* 編集モード */
+.editbar{display:flex;align-items:center;gap:6px;padding:4px 12px 8px;font-size:12.5px}
+.editbar .lbl{color:var(--accent);font-weight:700;flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:4px 10px;cursor:pointer;font-size:12.5px;color:var(--text)}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.erow{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:7px}
+.erow.ecat{margin-top:8px;background:var(--line)}
+/* フィードの行は2段: 1段目 アイコン+名前、2段目 カテゴリ・▲▼・削除(サイドバーが狭くても切れない) */
+.erow.efeed{flex-direction:column;align-items:stretch;gap:5px;padding:7px 6px 8px 12px;border-radius:0;border-bottom:1px solid var(--line)}
+.erow.efeed .l1,.erow.efeed .l2{display:flex;align-items:center;gap:5px;min-width:0}
+.erow.efeed select{flex:1;max-width:none}
+.erow input,.erow select{min-width:0;border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:3px 6px;font-size:12.5px;color:var(--text)}
+.erow input{flex:1}
+.erow.ecat input{font-weight:700}
+.erow select{max-width:96px;flex:none}
+.erow .mv{border:1px solid var(--line);background:var(--panel);border-radius:6px;width:26px;height:26px;flex:none;cursor:pointer;color:var(--muted);padding:0}
+.erow .mv:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}
+.erow .mv:disabled{opacity:.35;cursor:default}
+.erow .rm{border:1px solid var(--line);background:var(--panel);border-radius:6px;height:26px;padding:0 8px;flex:none;cursor:pointer;color:var(--danger);font-size:12px;white-space:nowrap}
+.erow img,.erow .ph{flex:none;width:16px;height:16px;border-radius:3px}
+.ehint{font-size:11.5px;color:var(--muted);padding:2px 12px 8px}
 .armed{display:block !important;background:var(--danger) !important;color:#fff !important;font-size:12px;white-space:nowrap}
 .sep{height:1px;background:var(--line);margin:6px 8px}
 .sidefoot{display:flex;gap:4px;padding:8px 10px;border-top:1px solid var(--line);font-size:12px}
@@ -98,9 +126,16 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
   <aside class="side">
     <div class="brand">
       <h1>Feed Reader</h1>
+      <span style="flex:1"></span>
+      <button class="iconbtn" id="editBtn" title="カテゴリ・並び順・削除の編集">編集</button>
       <button class="iconbtn" id="refresh" title="すべて更新 (r)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg>
       </button>
+    </div>
+    <div class="editbar" id="editbar" hidden>
+      <span class="lbl">編集中</span>
+      <button class="btn" id="addCat">＋カテゴリ</button>
+      <button class="btn primary" id="editDone">完了</button>
     </div>
     <form class="add" id="addForm">
       <input id="addUrl" placeholder="フィードまたはサイトのURL" autocomplete="off">
@@ -141,7 +176,11 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = { feeds: [], items: [], feed: 'all', unread: true, sel: null };
+const state = { feeds: [], categories: [], items: [], feed: 'all', unread: true, sel: null, edit: false };
+// 折りたたんだカテゴリ(この端末だけに保存)
+let collapsed = new Set();
+try { collapsed = new Set(JSON.parse(localStorage.getItem('collapsedCats') || '[]')); } catch {}
+const saveCollapsed = () => { try { localStorage.setItem('collapsedCats', JSON.stringify([...collapsed])); } catch {} };
 try { const u = localStorage.getItem('unreadOnly'); if (u !== null) state.unread = u === '1'; } catch {}
 
 async function api(path, opts = {}) {
@@ -184,46 +223,182 @@ function armed(btn, label) {
 
 /* ---------- feeds ---------- */
 async function loadFeeds() {
-  state.feeds = await api('api/feeds');
+  [state.feeds, state.categories] = await Promise.all([api('api/feeds'), api('api/categories')]);
   renderFeeds();
 }
+const catNames = () => state.categories.map(c => c.name);
+const feedsIn = cat => state.feeds.filter(f => (f.category || '') === cat);
+const iconOf = f => `<img src="${esc(favicon(f))}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ph'}))">`;
+
 function renderFeeds() {
   const total = state.feeds.reduce((a, f) => a + f.unread, 0);
-  const row = (id, name, count, icon, f) => `
-    <div class="feed ${state.feed == id ? 'active' : ''} ${f && f.error ? 'err' : ''}" data-id="${id}" title="${esc(f ? (f.error || f.url) : name)}">
+  $('#editbar').hidden = !state.edit;
+  $('#addForm').hidden = state.edit;
+  $('#editBtn').textContent = state.edit ? '' : '編集';
+  $('#editBtn').hidden = state.edit;
+  if (state.edit) renderEdit(); else renderNormal(total);
+  const cur = state.feeds.find(f => f.id == state.feed);
+  $('#listTitle').textContent = state.feed === 'all' ? 'すべて' : state.feed === 'starred' ? 'スター付き'
+    : state.feed.startsWith('cat:') ? (state.feed.slice(4) || '未分類') : (cur ? cur.title : '');
+  document.title = total ? `(${total}) Feed Reader` : 'Feed Reader';
+}
+
+// 普段の表示: すべて・スター → カテゴリごと(見出しを押すとカテゴリの記事、▸ で折りたたみ)→ 未分類
+function renderNormal(total) {
+  const row = (id, name, count, icon, f, inner) => `
+    <div class="feed ${inner ? 'in' : ''} ${state.feed == id ? 'active' : ''} ${f && f.error ? 'err' : ''}" data-id="${esc(id)}" title="${esc(f ? (f.error || f.url) : name)}">
       ${icon}<span class="name">${esc(name)}</span>
       <span class="count">${count || ''}</span>
-      ${f ? `<button class="iconbtn del" data-del="${id}" title="削除">✕</button>` : ''}
     </div>`;
+  const cats = catNames();
+  const group = (cat, label) => {
+    const fs = feedsIn(cat);
+    const unread = fs.reduce((a, f) => a + f.unread, 0);
+    const shut = collapsed.has(cat);
+    return `<div class="cat ${state.feed === 'cat:' + cat ? 'active' : ''}" data-id="cat:${esc(cat)}">
+        <button class="caret" data-toggle="${esc(cat)}" aria-label="${shut ? '開く' : '閉じる'}">${shut ? '▸' : '▾'}</button>
+        <span class="name">${esc(label)}</span><span class="count">${unread || ''}</span></div>` +
+      (shut ? '' : fs.map(f => row(f.id, f.title || f.url, f.unread, iconOf(f), f, true)).join(''));
+  };
+  const loose = feedsIn('');
   $('#feeds').innerHTML =
     row('all', 'すべて', total, '<span class="ph" style="background:var(--accent)"></span>') +
     row('starred', 'スター付き', '', '<span class="ph" style="background:none;color:var(--accent);line-height:16px;text-align:center">★</span>') +
     '<div class="sep"></div>' +
-    (state.feeds.length ? state.feeds.map(f =>
-      row(f.id, f.title || f.url, f.unread, `<img src="${esc(favicon(f))}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ph'}))">`, f)
-    ).join('') : '<div class="empty" style="padding:16px">上の欄にURLを入れて<br>フィードを追加</div>');
-  const cur = state.feeds.find(f => f.id == state.feed);
-  $('#listTitle').textContent = state.feed === 'all' ? 'すべて' : state.feed === 'starred' ? 'スター付き' : (cur ? cur.title : '');
-  document.title = total ? `(${total}) Feed Reader` : 'Feed Reader';
+    (!state.feeds.length ? '<div class="empty" style="padding:16px">上の欄にURLを入れて<br>フィードを追加</div>'
+      : cats.map(c => group(c, c)).join('') +
+        (cats.length && loose.length ? group('', '未分類') : loose.map(f => row(f.id, f.title || f.url, f.unread, iconOf(f), f)).join('')));
 }
+
+// 編集モード: カテゴリの名前・並び・削除、フィードの名前・カテゴリ・並び・削除
+function renderEdit() {
+  const cats = catNames();
+  const opts = cur => `<option value="">未分類</option>` + cats.map(c => `<option ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  const feedRow = (f, k, n) => `
+    <div class="erow efeed" data-fid="${f.id}">
+      <div class="l1">${iconOf(f)}<input value="${esc(f.title || f.url)}" data-ftitle="${f.id}" aria-label="フィード名"></div>
+      <div class="l2">
+        <select data-fcat="${f.id}" aria-label="カテゴリ">${opts(f.category || '')}</select>
+        <button class="mv" data-fmove="${f.id}" data-dir="-1" ${k === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
+        <button class="mv" data-fmove="${f.id}" data-dir="1" ${k === n - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
+        <button class="rm" data-fdel="${f.id}">削除</button>
+      </div>
+    </div>`;
+  const block = (cat, i) => {
+    const fs = feedsIn(cat);
+    const head = cat === '' ? `<div class="erow ecat"><span style="flex:1;font-weight:700;font-size:12.5px;padding:3px 6px">未分類</span></div>` : `
+      <div class="erow ecat" data-cat="${esc(cat)}">
+        <input value="${esc(cat)}" data-crename="${esc(cat)}" aria-label="カテゴリ名">
+        <button class="mv" data-cmove="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
+        <button class="mv" data-cmove="${i}" data-dir="1" ${i === cats.length - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
+        <button class="rm" data-cdel="${esc(cat)}">削除</button>
+      </div>`;
+    return head + fs.map((f, k) => feedRow(f, k, fs.length)).join('');
+  };
+  $('#feeds').innerHTML =
+    '<div class="ehint">▲▼ で並べ替え、名前は書き換えて Enter。カテゴリを削除すると中のフィードは未分類に移ります。</div>' +
+    cats.map((c, i) => block(c, i)).join('') + (feedsIn('').length || !cats.length ? block('', -1) : '');
+}
+
+// 今の並び(state.categories と state.feeds の順)をサーバーに保存する
+async function saveLayout() {
+  const order = [...catNames(), ''];
+  const feeds = order.flatMap(c => feedsIn(c)).map(f => ({ id: f.id, category: f.category || '' }));
+  try { await api('api/layout', { body: { categories: catNames(), feeds } }); }
+  catch (err) { $('#msg').textContent = err.message; }
+  await loadFeeds();
+}
+function moveFeed(id, dir) {
+  const f = state.feeds.find(x => x.id == id);
+  const fs = feedsIn(f.category || '');
+  const k = fs.indexOf(f), other = fs[k + dir];
+  if (!other) return;
+  const a = state.feeds.indexOf(f), b = state.feeds.indexOf(other);
+  [state.feeds[a], state.feeds[b]] = [state.feeds[b], state.feeds[a]];
+  saveLayout();
+}
+function moveCat(i, dir) {
+  const c = state.categories, j = i + dir;
+  if (j < 0 || j >= c.length) return;
+  [c[i], c[j]] = [c[j], c[i]];
+  saveLayout();
+}
+
 $('#feeds').addEventListener('click', async e => {
-  const del = e.target.closest('[data-del]');
-  if (del) {
-    e.stopPropagation();
-    if (!armed(del, '削除する')) return;
-    const f = state.feeds.find(x => x.id == del.dataset.del);
-    await api('api/feeds/' + f.id, { method: 'DELETE' });
-    if (state.feed == f.id) state.feed = 'all';
-    await loadFeeds(); await loadItems();
+  if (state.edit) {
+    const t = e.target;
+    if (t.dataset.fmove) return moveFeed(t.dataset.fmove, +t.dataset.dir);
+    if (t.dataset.cmove) return moveCat(+t.dataset.cmove, +t.dataset.dir);
+    if (t.dataset.fdel) {
+      if (!armed(t, '本当に削除')) return;
+      await api('api/feeds/' + t.dataset.fdel, { method: 'DELETE' });
+      if (state.feed == t.dataset.fdel) state.feed = 'all';
+      await loadFeeds(); await loadItems();
+      return;
+    }
+    if (t.dataset.cdel !== undefined) {
+      if (!armed(t, '本当に削除')) return;
+      const name = t.dataset.cdel;
+      state.feeds.forEach(f => { if (f.category === name) f.category = ''; });
+      state.categories = state.categories.filter(c => c.name !== name);
+      if (state.feed === 'cat:' + name) state.feed = 'all';
+      return saveLayout();
+    }
     return;
   }
-  const el = e.target.closest('.feed');
+  const tog = e.target.closest('[data-toggle]');
+  if (tog) {
+    e.stopPropagation();
+    const c = tog.dataset.toggle;
+    collapsed.has(c) ? collapsed.delete(c) : collapsed.add(c);
+    saveCollapsed(); renderFeeds();
+    return;
+  }
+  const el = e.target.closest('.feed,.cat');
   if (!el) return;
   state.feed = el.dataset.id;
   renderFeeds();
   await loadItems();
   setView('list');
 });
+// 編集モードの入力: カテゴリの付け替えはすぐ保存、名前は Enter かフォーカスが外れたら保存
+$('#feeds').addEventListener('change', async e => {
+  const t = e.target;
+  if (t.dataset.fcat) {
+    const f = state.feeds.find(x => x.id == t.dataset.fcat);
+    f.category = t.value;
+    state.feeds = [...state.feeds.filter(x => x !== f), f]; // 移した先の最後に並べる
+    return saveLayout();
+  }
+  if (t.dataset.ftitle) {
+    const title = t.value.trim();
+    if (title) { await api('api/feeds/' + t.dataset.ftitle, { body: { title } }); await loadFeeds(); }
+    return;
+  }
+  if (t.dataset.crename !== undefined) {
+    const from = t.dataset.crename, to = t.value.trim().replace(/\s+/g, ' ');
+    if (!to || to === from) { t.value = from; return; }
+    if (catNames().includes(to)) { $('#msg').textContent = `「${to}」はもうあります`; t.value = from; return; }
+    state.categories.find(c => c.name === from).name = to;
+    state.feeds.forEach(f => { if (f.category === from) f.category = to; });
+    if (collapsed.delete(from)) { collapsed.add(to); saveCollapsed(); }
+    if (state.feed === 'cat:' + from) state.feed = 'cat:' + to;
+    return saveLayout();
+  }
+});
+$('#feeds').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) e.target.blur(); });
+
+$('#editBtn').onclick = () => { state.edit = true; $('#msg').textContent = ''; renderFeeds(); };
+$('#editDone').onclick = () => { state.edit = false; renderFeeds(); };
+$('#addCat').onclick = () => {
+  let n = 1, name = '新しいカテゴリ';
+  while (catNames().includes(name)) name = `新しいカテゴリ ${++n}`;
+  state.categories.push({ name });
+  saveLayout().then(() => {
+    const inp = document.querySelector(`[data-crename="${CSS.escape(name)}"]`);
+    if (inp) { inp.focus(); inp.select(); }
+  });
+};
 
 $('#addForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -261,7 +436,7 @@ $('#importFile').onchange = async e => {
 
 /* ---------- items ---------- */
 async function loadItems(keepSel) {
-  state.items = await api(`api/items?feed=${state.feed}&unread=${state.unread ? 1 : 0}`);
+  state.items = await api(`api/items?feed=${encodeURIComponent(state.feed)}&unread=${state.unread ? 1 : 0}`);
   if (!keepSel) state.sel = null;
   renderItems();
 }
@@ -368,7 +543,7 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown', e => {
-  if (e.target.matches('input,textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target.matches('input,textarea,select') || e.metaKey || e.ctrlKey || e.altKey) return;
   const idx = state.items.findIndex(x => x.id === state.sel);
   const it = state.items[idx];
   switch (e.key) {
